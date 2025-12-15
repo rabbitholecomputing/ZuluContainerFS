@@ -86,12 +86,22 @@ namespace ZuluContainerFs
          * Get the current container format
          * \returns the format of the container as a class enum Container value
          */
-        virtual Container getContainerFormat();
+
+        virtual Container getContainerFormat() const;
         /**
          * Get the C string name for the container type
          * \returns a C string name of the container type 
          */
-        virtual const char* getContainerNameCstr();
+        virtual const char* getContainerNameCstr() const;
+
+        /**
+         * Determine if the Container iamge type is not supported. Should generally be checked when an open fails
+         * Currently only full image allocation is supported
+         * \return true if the image is a container, but the type of the container format is unsupported
+         *         false if the image isn't a container or the container is supported
+         */
+        virtual bool isUnsupportedContainerType() const;
+
         /**
          * Set the parameters with CHS from the metadata from the container
          * \param cylinders set the cylinders
@@ -102,6 +112,11 @@ namespace ZuluContainerFs
         virtual bool setCHS(uint16_t &cylinders, uint8_t &heads, uint8_t &sectors);
 
     protected:
+        /**
+         * Check if the file is open
+         * \returns true if the file is open whether it is a container or not, false if the file is closed
+         */
+        virtual bool openCheck();
         /**
          *  Check all formats, verify that metadata is good, and init the image
          * \returns true if a format is found, false if initialized as a plain iamge
@@ -125,28 +140,9 @@ namespace ZuluContainerFs
          */
         virtual void reset();
 
-        /**
-         * Swaps the Endianess of integer type like uint16 and int64
-         * behavior is undefined for non integer type
-         * \param integer the integer to be swapped
-         * \returns the swapped integer value
-         */
-        template <typename T> T swapIntEndian(const T &integer)
-        {
-            if (sizeof(T) == 1)
-                return integer;
-
-            T swappedEndian = 0;
-            for (unsigned int i = 0; i < sizeof(T); ++i)
-            {
-                (reinterpret_cast<uint8_t*>(&swappedEndian))[i] = (reinterpret_cast<const uint8_t*>(&integer))[sizeof(T) - 1 - i]; 
-            }
-            return swappedEndian;
-        }
-
     private:
-        Container m_container_format;
-        CHS m_chs;
-        uint64_t m_image_size_bytes;
+        Container m_container_format {Container::None};
+        CHS m_chs {};
+        uint64_t m_image_size_bytes {};
     };
 }

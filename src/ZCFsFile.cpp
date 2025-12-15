@@ -26,61 +26,46 @@
 
 #include <cstddef>
 #include <algorithm>
-#include "ZCFileFs.h"
+#include "ZCUtil.h"
+#include "ZCFsFile.h"
 
 using namespace ZuluContainerFs;
-
+// The Microsoft VHD standard's footer had two different length depending
+// on which version was being used
 inline constexpr uint16_t VHD_FOOTER_LEN_POST_2004 {512};
 inline constexpr uint16_t VHD_FOOTER_LEN_PRE_2004 {511};
 inline constexpr char VHD_COOKIE[] {"conectix"};
 
 
-ZCFsFile::ZCFsFile() : m_container_format(Container::None), m_chs({}), m_image_size_bytes(0)
+ZCFsFile::ZCFsFile()
+    : FsFile()
+    , m_container_format(Container::None)
+    , m_chs({})
+    , m_image_size_bytes(0)
 {
-    FsFile();
 }
 
 bool ZCFsFile::open(const char *path, oflag_t oflag)
 {
-    bool opened{FsFile::open(path, oflag)};
-    if (!verifyAndInit())
-    {
-        close();
-        opened = false;
-    }
-    return opened;
+    FsFile::open(path, oflag);
+    return openCheck();
 }
 bool ZCFsFile::open(FsBaseFile *dir, const char *path, oflag_t oflag)
 {
-    bool opened {FsFile::open(dir, path, oflag)};
-    if (!verifyAndInit())
-    {
-        close();
-        opened = false;
-    }
-    return opened;
+    FsFile::open(dir, path, oflag);
+    return openCheck();
 
 }
 bool ZCFsFile::open(FsBaseFile *dir, uint32_t index, oflag_t oflag)
 {
-    bool opened {FsFile::open(dir, index, oflag)};
-    if (!verifyAndInit())
-    {
-        close();
-        opened = false;
-    }
-    return opened;
+    FsFile::open(dir, index, oflag);
+    return openCheck();
 
 }
 bool ZCFsFile::open(FsVolume *vol, const char *path, oflag_t oflag)
 {
-    bool opened {FsFile::open(vol, path, oflag)};
-    if (!verifyAndInit())
-    {
-        close();
-        opened = false;
-    }
-    return opened;
+    FsFile::open(vol, path, oflag);
+    return openCheck();
 }
 
 bool ZCFsFile::close()
@@ -105,18 +90,17 @@ uint64_t ZCFsFile::size() const
 ZCFsFile &ZCFsFile::operator=(FsFile && from)
 {
     move(&from);
-    reset();
     verifyAndInit();
     return *this;
 }
 
-Container ZCFsFile::getContainerFormat()
+Container ZCFsFile::getContainerFormat() const
 {
     return m_container_format;
 }
 
 
-const char* ZCFsFile::getContainerNameCstr()
+const char* ZCFsFile::getContainerNameCstr() const
 {
     switch (m_container_format)
     {
@@ -126,6 +110,11 @@ const char* ZCFsFile::getContainerNameCstr()
         return "vhd";
     }
     return "unknown";
+}
+
+bool ZCFsFile::isUnsupportedContainerType() const
+{
+    return !isOpen() && (m_container_format != Container::None);
 }
 
 bool ZCFsFile::setCHS(uint16_t &cylinders, uint8_t &heads, uint8_t &sectors)
@@ -142,15 +131,29 @@ bool ZCFsFile::setCHS(uint16_t &cylinders, uint8_t &heads, uint8_t &sectors)
 
 }
 
+bool ZCFsFile::openCheck()
+{
+    verifyAndInit();
+    return isOpen();
+}
 
 bool ZCFsFile::verifyAndInit()
 {
+    reset();
     if (isOpen() && isFile())
     {
         if (verifyAndInitVhd(VHD_FOOTER_LEN_POST_2004))
             return true;
-        if ( verifyAndInitVhd(VHD_FOOTER_LEN_POST_2004))
+        if ( verifyAndInitVhd(VHD_FOOTER_LEN_PRE_2004))
             return true;
+    }
+    // Container was found, but container format type is unsupported
+    // Reset everything but the format for isUnsupportedType checking
+    if (m_container_format != Container::None)
+    {
+        m_image_size_bytes = 0;
+        m_chs = {};
+        FsFile::close();
     }
     return false;
 }
@@ -187,6 +190,8 @@ bool ZCFsFile::verifyAndInitVhd(size_t footer_len)
         return false;
     }
 
+    m_container_format = Container::Vhd;
+
     if (swapIntEndian(footer.disk_type) != 2)
     {
         return false;
@@ -201,8 +206,6 @@ bool ZCFsFile::verifyAndInitVhd(size_t footer_len)
     auto file_size = FsBaseFile::size();
     auto adjusted_file_size = file_size > footer_len ? (file_size - footer_len) : 0;
     m_image_size_bytes = std::min(swapIntEndian(footer.current_size), adjusted_file_size);
-
-    m_container_format = Container::Vhd;
     return true;
 }
 
