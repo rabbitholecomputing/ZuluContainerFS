@@ -81,6 +81,34 @@ namespace ZuluContainerFs
         uint64_t size() const;
         ZCFsFile &operator=(FsFile &&);
 
+        /**
+         * Same as FsBaseFile::contiguousRange(), but the result is cached while
+         * the file stays open. On FAT16/32 SdFat finds the range by walking the
+         * file's whole cluster chain through a one sector FAT cache, which for a
+         * multi-GB image is thousands of SD card reads. The first call walks the
+         * chain once (and on a contiguous FAT file that also lets SdFat seek
+         * without walking the chain), later calls return the cached result as
+         * long as the file's first cluster and allocated length are unchanged.
+         * \param bgnSector set to the first sector of the contiguous range, may be nullptr
+         * \param endSector set to the last sector of the contiguous range, may be nullptr
+         * \returns true if the file is contiguous
+         */
+        bool contiguousRange(uint32_t *bgnSector, uint32_t *endSector);
+
+        /**
+         * Enable or disable checking for a Microsoft VHD container when a file is opened.
+         * Disabled by default, the caller decides which files may be VHD containers,
+         * for example by the file extension, and enables it before opening those.
+         * The setting stays until changed, it is not reset by open() or close().
+         * \param enable true to check for a VHD footer on open
+         */
+        void setVhdEnabled(bool enable);
+
+        /**
+         * \returns true if opening a file checks for a VHD container
+         */
+        bool isVhdEnabled() const;
+
         // Calls unique to this class
         /**
          * Get the current container format
@@ -118,23 +146,33 @@ namespace ZuluContainerFs
          */
         virtual bool openCheck();
         /**
-         *  Check all formats, verify that metadata is good, and init the image
+         * Check the enabled container formats, verify that metadata is good, and init the image
          * \returns true if a format is found, false if initialized as a plain iamge
          *  */
         virtual bool verifyAndInit();
         /**
-         * Verify Microsoft's vhd file format and initialize the image
-         * \param footer_len pass length of the footer from the specific version of vhd
+         * Verify Microsoft's vhd file format and initialize the image.
+         * The post 2004 (512 byte) and pre 2004 (511 byte) footers are both
+         * checked from a single seek and read of the last 512 bytes of the file
          * \returns true if found a vhd format was initialized, false if format was invalid
          */
-        virtual bool verifyAndInitVhd(size_t footer_len);
+        virtual bool verifyAndInitVhd();
         /**
-         * Calculate the VHD format footer's checksum
-         * \param footer a void pointer to the VhdFooter struct
-         * \param len the length of the VhdFooter struct
-         * \return the VHD footer's checksum
+         * Validate a VHD footer and if it is valid initialize the image from it
+         * \param footer_data pointer to the first byte of the footer, at least sizeof(VhdFooter) bytes
+         * \param footer_len length of the footer from the specific version of vhd
+         * \param calced_checksum the checksum calculated over the whole footer
+         * \returns true if a valid, supported vhd footer was found and initialized
          */
-        virtual uint32_t vhdFooterChecksum(const void* footer, size_t len);
+        virtual bool initVhdFooter(const uint8_t *footer_data, size_t footer_len, uint32_t calced_checksum);
+        /**
+         * Sum the bytes of the start of a VHD footer, skipping the checksum field.
+         * The VHD checksum is the one's complement of the sum over the whole footer.
+         * \param footer_data pointer to the first byte of the footer
+         * \param len number of bytes from the start of the footer to sum
+         * \return the sum of the bytes
+         */
+        virtual uint32_t vhdFooterByteSum(const uint8_t *footer_data, size_t len);
         /**
          * Reset private values of the ZCFsFile class
          */
@@ -144,5 +182,17 @@ namespace ZuluContainerFs
         Container m_container_format {Container::None};
         CHS m_chs {};
         uint64_t m_image_size_bytes {};
+
+        // Set by the caller with setVhdEnabled(), not cleared by reset()
+        bool m_vhd_enabled {false};
+
+        // Cached contiguousRange() result, used while m_contig_checked is set and
+        // the file's first cluster and data length still match the cached values
+        bool m_contig_checked {false};
+        bool m_contig_result {false};
+        uint32_t m_contig_bgn {};
+        uint32_t m_contig_end {};
+        uint32_t m_contig_first_cluster {};
+        uint64_t m_contig_data_length {};
     };
 }
